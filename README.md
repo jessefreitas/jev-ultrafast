@@ -1,10 +1,10 @@
-<img src="docs/banner.svg" alt="Jev Ultrafast · Browser Use × TypeSafe" width="100%" />
+<img src="docs/banner.svg" alt="Jev Ultrafast local-only" width="100%" />
 
-# Jev Ultrafast ⚡
+# Jev Ultrafast local-only
 
 **A browser agent with a dynamic, indexed action space.**
 
-Give it one goal. [TypeSafe's Jev](https://docs.typesafe.ai/introduction) picks an operation and an element. A small LLM writes text only when the operation is `TYPE_TEXT`.
+This internal fork keeps the observed-action browser loop and disables telemetry plus every external model request by default.
 
 **Zürich → London on Google Flights in 7.1 seconds.** One natural-language goal, actual text generation, and loading waits included.
 
@@ -53,7 +53,6 @@ git clone https://github.com/browser-use/jev-ultrafast.git
 cd jev-ultrafast
 uv sync
 cp .env.example .env
-# Add TYPESAFE_API_KEY and TEXT_MODEL_API_KEY.
 uv run jev
 ```
 
@@ -61,7 +60,13 @@ Open **http://127.0.0.1:8766** and click **Start demo → Run automatically**. T
 
 Chrome connects through [Browser Harness](https://github.com/browser-use/browser-harness), installed by `uv sync`. Run `uv run browser-harness --doctor` if it needs connecting. Allow remote debugging in Chrome when prompted.
 
-`TEXT_MODEL_API_KEY` is an OpenRouter key in the example configuration. The current demo uses `inception/mercury-2.5` with reasoning disabled. Gemini, GLM, and DeepSeek can also use the OpenAI-compatible text helper; configure the appropriate model, endpoint, and reasoning setting.
+The included inspector is useful for observing and validating browser controls locally. Automatic goal execution remains blocked until an approved internal decision provider is implemented.
+
+## OmniForge Workers AI gateway
+
+`worker/` contains the internal decision gateway for `@cf/meta/llama-3.3-70b-instruct-fp8-fast`. It accepts only `POST /v1/decision`, requires a bearer token, strips page text from the contract, and redacts e-mails and long numeric identifiers before inference. The client allows only click, select, and wait actions; typing and labels that indicate commercial or financial mutation remain blocked.
+
+Configure `JEV_WORKERS_AI_GATEWAY_URL` and `JEV_WORKERS_AI_GATEWAY_TOKEN` only through the runtime secret store. The Worker secret is named `JEV_WORKERS_AI_GATEWAY_TOKEN`; never commit either value. Deploy is intentionally separate from this repository change so the Cloudflare account owner can be verified first.
 
 ## Use the library
 

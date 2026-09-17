@@ -1,30 +1,18 @@
 """TypeSafe makes choices; an optional small OpenAI-compatible model writes field values."""
 
-import json
 import math
-import os
 import time
 
-import httpx
+from .questions import NEXT_ACTION, TARGET
+from .workers_gateway import request_decision
 
-from .questions import NEXT_ACTION, TARGET, TEXT_VALUE
+AUTOMATIC_TEXT_ENTRY_DISABLED = "Automatic text entry is disabled in the local-only fork."
+BLOCKED_ACTION_TERMS = ("aprovar", "cancelar", "deletar", "excluir", "gerar", "pagar", "salvar", "enviar")
 
-CLIENT = httpx.Client(http2=True, timeout=25)
 
-
-def post_json(url, key, body):
-    for attempt in range(3):
-        try:
-            response = CLIENT.post(url, json=body, headers={"Authorization": f"Bearer {key}"})
-        except httpx.HTTPError:
-            raise RuntimeError("Model connection failed; no action executed.") from None
-        if response.status_code in {429, 529, 503} and attempt < 2:
-            time.sleep(0.5 * 2**attempt)
-            continue
-        if response.is_error:
-            raise RuntimeError(f"Model provider returned HTTP {response.status_code}; no action executed.")
-        return response.json()
-    raise RuntimeError("Model unavailable")
+def post_json(_url, _key, body):
+    """Route decisions only through the authenticated OmniForge gateway."""
+    return request_decision(body)
 
 
 def validate_choice(answer, ids):
@@ -78,8 +66,18 @@ def action_space(actions):
     return elements, targets, controls
 
 
+def safe_actions(actions):
+    """First rollout: never expose text entry or commercial/financial mutations to the model."""
+    return [
+        action
+        for action in actions
+        if action["kind"] in {"click", "select", "wait"}
+        and not any(term in action["label"].casefold() for term in BLOCKED_ACTION_TERMS)
+    ]
+
+
 def choose(state, goal, history):
-    elements, targets, controls = action_space(state["actions"])
+    elements, targets, controls = action_space(safe_actions(state["actions"]))
     labels = {
         "CLICK": "Click an element, button, menu option, autocomplete suggestion, or calendar day.",
         "TYPE_TEXT": "Enter or replace text in an editable field. A small LLM will supply the value from the goal.",
@@ -105,18 +103,17 @@ def choose(state, goal, history):
             "instructions": {"goal": goal, "operation": operation, "rules": [NEXT_ACTION, TARGET]},
         }
     body = {
-        "model": os.environ.get("TYPESAFE_MODEL", "jev-latest"),
+        "model": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
         "state": {
-            "page": {k: state[k] for k in ("url", "title", "text")},
             "elements": elements,
             "recent_actions": [
-                {k: h.get(k) for k in ("action", "kind", "text", "page_changed")} for h in history[-10:]
+                {k: h.get(k) for k in ("action", "kind", "page_changed")} for h in history[-10:]
             ],
         },
         "questions": questions,
     }
     started = time.perf_counter()
-    result = post_json("https://api.typesafe.ai/v1/systemone", os.environ["TYPESAFE_API_KEY"], body)
+    result = post_json("internal://decision-provider", None, body)
     operation_answer = validate_choice(result["answers"].get("operation", {}), operations)
     operation = operation_answer["choice"]
     target = None
@@ -158,41 +155,5 @@ def field_context(goal, action, page, history):
 
 
 def field_text(context):
-    key = os.environ.get("TEXT_MODEL_API_KEY")
-    if not key:
-        raise ValueError("TYPE_TEXT needs TEXT_MODEL_API_KEY; no text is hardcoded or guessed by the executor.")
-    base = os.environ.get("TEXT_MODEL_BASE_URL", "https://api.deepseek.com/v1").rstrip("/")
-    model = os.environ.get("TEXT_MODEL", "deepseek-chat")
-    reasoning = {"thinking": {"type": "disabled"}} if "api.deepseek.com/" in base else {"reasoning": {"effort": "low"}}
-    if os.environ.get("TEXT_MODEL_REASONING") == "none":
-        reasoning = {"reasoning": {"enabled": False}}
-    started = time.perf_counter()
-    result = post_json(
-        base + "/chat/completions",
-        key,
-        {
-            "model": model,
-            "max_tokens": 1024,
-            "response_format": {"type": "json_object"},
-            **reasoning,
-            "messages": [
-                {"role": "system", "content": TEXT_VALUE},
-                {
-                    "role": "user",
-                    "content": json.dumps(context),
-                },
-            ],
-        },
-    )
-    try:
-        output = json.loads(result["choices"][0]["message"]["content"])
-        value = output["text"]
-        if set(output) != {"text"} or not isinstance(value, str) or not value.strip() or len(value) > 2000:
-            raise ValueError()
-    except (ValueError, KeyError, TypeError):
-        raise ValueError("Text helper returned no valid field value; nothing typed.") from None
-    return value, {
-        "model": model,
-        "latency_ms": round((time.perf_counter() - started) * 1000),
-        "usage": result.get("usage", {}),
-    }
+    del context
+    raise RuntimeError(AUTOMATIC_TEXT_ENTRY_DISABLED)
