@@ -1,20 +1,18 @@
 """TypeSafe makes choices; an optional small OpenAI-compatible model writes field values."""
 
-import json
 import math
 import time
 
 from .questions import NEXT_ACTION, TARGET
+from .workers_gateway import request_decision
 
-EXTERNAL_MODEL_REQUESTS_DISABLED = (
-    "External model requests are disabled in the local-only fork. "
-    "Configure and implement an approved internal decision provider before enabling automation."
-)
+AUTOMATIC_TEXT_ENTRY_DISABLED = "Automatic text entry is disabled in the local-only fork."
+BLOCKED_ACTION_TERMS = ("aprovar", "cancelar", "deletar", "excluir", "gerar", "pagar", "salvar", "enviar")
 
 
-def post_json(_url, _key, _body):
-    """Fail closed: this fork does not transmit browser state to model vendors."""
-    raise RuntimeError(EXTERNAL_MODEL_REQUESTS_DISABLED)
+def post_json(_url, _key, body):
+    """Route decisions only through the authenticated OmniForge gateway."""
+    return request_decision(body)
 
 
 def validate_choice(answer, ids):
@@ -68,8 +66,18 @@ def action_space(actions):
     return elements, targets, controls
 
 
+def safe_actions(actions):
+    """First rollout: never expose text entry or commercial/financial mutations to the model."""
+    return [
+        action
+        for action in actions
+        if action["kind"] in {"click", "select", "wait"}
+        and not any(term in action["label"].casefold() for term in BLOCKED_ACTION_TERMS)
+    ]
+
+
 def choose(state, goal, history):
-    elements, targets, controls = action_space(state["actions"])
+    elements, targets, controls = action_space(safe_actions(state["actions"]))
     labels = {
         "CLICK": "Click an element, button, menu option, autocomplete suggestion, or calendar day.",
         "TYPE_TEXT": "Enter or replace text in an editable field. A small LLM will supply the value from the goal.",
@@ -95,12 +103,11 @@ def choose(state, goal, history):
             "instructions": {"goal": goal, "operation": operation, "rules": [NEXT_ACTION, TARGET]},
         }
     body = {
-        "model": "internal-disabled",
+        "model": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
         "state": {
-            "page": {k: state[k] for k in ("url", "title", "text")},
             "elements": elements,
             "recent_actions": [
-                {k: h.get(k) for k in ("action", "kind", "text", "page_changed")} for h in history[-10:]
+                {k: h.get(k) for k in ("action", "kind", "page_changed")} for h in history[-10:]
             ],
         },
         "questions": questions,
@@ -148,17 +155,5 @@ def field_context(goal, action, page, history):
 
 
 def field_text(context):
-    started = time.perf_counter()
-    result = post_json("internal://text-provider", None, context)
-    try:
-        output = json.loads(result["choices"][0]["message"]["content"])
-        value = output["text"]
-        if set(output) != {"text"} or not isinstance(value, str) or not value.strip() or len(value) > 2000:
-            raise ValueError()
-    except (ValueError, KeyError, TypeError):
-        raise ValueError("Text helper returned no valid field value; nothing typed.") from None
-    return value, {
-        "model": "internal-disabled",
-        "latency_ms": round((time.perf_counter() - started) * 1000),
-        "usage": result.get("usage", {}),
-    }
+    del context
+    raise RuntimeError(AUTOMATIC_TEXT_ENTRY_DISABLED)

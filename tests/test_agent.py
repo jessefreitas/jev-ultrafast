@@ -66,11 +66,10 @@ def test_invalid_choice_is_rejected(mutation):
 
 def test_external_model_requests_are_blocked(monkeypatch):
     monkeypatch.setenv("TYPESAFE_API_KEY", "must-not-be-used")
-    with pytest.raises(RuntimeError, match="External model requests are disabled"):
+    with pytest.raises(RuntimeError, match="Workers AI gateway is not configured"):
         model.choose(page(), "Inspect the local ERP", [])
 
-    monkeypatch.setenv("TEXT_MODEL_API_KEY", "must-not-be-used")
-    with pytest.raises(RuntimeError, match="External model requests are disabled"):
+    with pytest.raises(RuntimeError, match="Automatic text entry is disabled"):
         model.field_text({"goal": "Populate a field"})
 
 
@@ -90,7 +89,7 @@ def test_one_index_per_node_with_operation_specific_targets():
     assert "WAIT" in controls
 
 
-def test_all_heads_are_one_request_and_only_matching_head_executes(monkeypatch):
+def test_safe_policy_omits_text_entry_and_consumes_only_its_matching_head(monkeypatch):
     calls = []
 
     def post(_url, _key, body):
@@ -98,9 +97,8 @@ def test_all_heads_are_one_request_and_only_matching_head_executes(monkeypatch):
         return {
             "model": "test",
             "answers": {
-                "operation": choice(body["questions"]["operation"]["criteria"], "TYPE_TEXT"),
-                "type_text_target": choice(["1"], "1"),
-                "click_target": {"choice": "invented"},
+                "operation": choice(body["questions"]["operation"]["criteria"], "CLICK"),
+                "click_target": choice(["1", "2"], "2"),
             },
         }
 
@@ -108,8 +106,8 @@ def test_all_heads_are_one_request_and_only_matching_head_executes(monkeypatch):
     monkeypatch.setattr(model, "post_json", post)
     d = model.choose(page(), "Find a book", [])
     assert len(calls) == 1
-    assert d["operation"] == "TYPE_TEXT" and d["target"] == "1" and d["choice"] == "e1"
-    assert set(calls[0]["questions"]) == {"operation", "click_target", "type_text_target"}
+    assert d["operation"] == "CLICK" and d["target"] == "2" and d["choice"] == "e3"
+    assert set(calls[0]["questions"]) == {"operation", "click_target"}
 
 
 def test_click_cannot_consume_a_text_target(monkeypatch):
@@ -158,7 +156,7 @@ def test_target_head_receives_control_state_and_full_next_step_rules(monkeypatch
 
 def test_text_generation_is_blocked_before_context_can_leave_the_process():
     context = model.field_context('Fly from "Zurich" to London', page()["actions"][0], page(), [])
-    with pytest.raises(RuntimeError, match="External model requests are disabled"):
+    with pytest.raises(RuntimeError, match="Automatic text entry is disabled"):
         model.field_text(context)
 
 
@@ -307,13 +305,9 @@ def test_flight_verification_rejects_wrong_trip(changed):
     assert not verify(actual)["passed"]
 
 
-@pytest.mark.parametrize(
-    "content", ["Thinking: Zurich", '{"text":null}', '{"text":"Zurich","extra":true}', '{"text":123}']
-)
-def test_text_helper_rejects_invalid_values(monkeypatch, content):
-    monkeypatch.setenv("TEXT_MODEL_API_KEY", "test")
-    monkeypatch.setattr(model, "post_json", Mock(return_value={"choices": [{"message": {"content": content}}]}))
-    with pytest.raises(ValueError, match="nothing typed"):
+def test_text_helper_is_disabled_even_when_a_model_credential_exists(monkeypatch):
+    monkeypatch.setenv("TEXT_MODEL_API_KEY", "must-not-be-used")
+    with pytest.raises(RuntimeError, match="Automatic text entry is disabled"):
         model.field_text({"goal": "Find a flight"})
 
 

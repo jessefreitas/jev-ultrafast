@@ -62,6 +62,12 @@ Chrome connects through [Browser Harness](https://github.com/browser-use/browser
 
 The included inspector is useful for observing and validating browser controls locally. Automatic goal execution remains blocked until an approved internal decision provider is implemented.
 
+## OmniForge Workers AI gateway
+
+`worker/` contains the internal decision gateway for `@cf/meta/llama-3.3-70b-instruct-fp8-fast`. It accepts only `POST /v1/decision`, requires a bearer token, strips page text from the contract, and redacts e-mails and long numeric identifiers before inference. The client allows only click, select, and wait actions; typing and labels that indicate commercial or financial mutation remain blocked.
+
+Configure `JEV_WORKERS_AI_GATEWAY_URL` and `JEV_WORKERS_AI_GATEWAY_TOKEN` only through the runtime secret store. The Worker secret is named `JEV_WORKERS_AI_GATEWAY_TOKEN`; never commit either value. Deploy is intentionally separate from this repository change so the Cloudflare account owner can be verified first.
+
 ## Use the library
 
 ```python
