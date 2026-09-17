@@ -1,6 +1,6 @@
 """Offline contracts for a dynamic operation/target policy. No paid APIs."""
 
-import json
+import os
 import time
 from copy import deepcopy
 from unittest.mock import Mock
@@ -62,6 +62,22 @@ def test_invalid_choice_is_rejected(mutation):
         a["confidence"] = 5
     with pytest.raises(ValueError, match="Invalid TypeSafe"):
         model.validate_choice(a, {"a", "b"})
+
+
+def test_external_model_requests_are_blocked(monkeypatch):
+    monkeypatch.setenv("TYPESAFE_API_KEY", "must-not-be-used")
+    with pytest.raises(RuntimeError, match="External model requests are disabled"):
+        model.choose(page(), "Inspect the local ERP", [])
+
+    monkeypatch.setenv("TEXT_MODEL_API_KEY", "must-not-be-used")
+    with pytest.raises(RuntimeError, match="External model requests are disabled"):
+        model.field_text({"goal": "Populate a field"})
+
+
+def test_browser_harness_telemetry_is_forced_off():
+    assert os.environ["BH_TELEMETRY"] == "0"
+    assert os.environ["BROWSER_HARNESS_TELEMETRY"] == "0"
+    assert os.environ["ANONYMIZED_TELEMETRY"] == "0"
 
 
 def test_one_index_per_node_with_operation_specific_targets():
@@ -140,21 +156,10 @@ def test_target_head_receives_control_state_and_full_next_step_rules(monkeypatch
     assert d["choice"] == "e3"
 
 
-def test_quoted_task_text_still_uses_the_llm(monkeypatch):
-    monkeypatch.setenv("TEXT_MODEL_API_KEY", "test")
-    post = Mock(return_value={"choices": [{"message": {"content": '{"text":"Zurich"}'}}]})
-    monkeypatch.setattr(model, "post_json", post)
+def test_text_generation_is_blocked_before_context_can_leave_the_process():
     context = model.field_context('Fly from "Zurich" to London', page()["actions"][0], page(), [])
-    assert model.field_text(context)[0] == "Zurich"
-    assert post.call_count == 1
-    sent = json.loads(post.call_args.args[2]["messages"][1]["content"])
-    assert sent["goal"] == 'Fly from "Zurich" to London'
-
-
-def test_missing_text_credential_stops_before_guessing(monkeypatch):
-    monkeypatch.delenv("TEXT_MODEL_API_KEY", raising=False)
-    with pytest.raises(ValueError, match="TEXT_MODEL_API_KEY"):
-        model.field_text({"goal": 'Enter "Zurich"'})
+    with pytest.raises(RuntimeError, match="External model requests are disabled"):
+        model.field_text(context)
 
 
 @pytest.fixture
